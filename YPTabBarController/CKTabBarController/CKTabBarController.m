@@ -1,0 +1,272 @@
+//
+//  CKTabBarController.m
+//  CKTabBarController
+//
+//  Created by 喻平 on 15/8/11.
+//  Copyright (c) 2015年 CKTabBarController. All rights reserved.
+//
+
+#import "CKTabBarController.h"
+#import <objc/runtime.h>
+
+#define TAB_BAR_HEIGHT 50
+
+@interface CKTabBarController () {
+    BOOL _didViewAppeared;
+}
+@property (nonatomic, strong) UIScrollView *scrollView;
+
+@property (nonatomic, assign) BOOL contentScrollEnabled;
+@property (nonatomic, assign) BOOL contentSwitchAnimated;
+@end
+
+@implementation CKTabBarController
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        [self awakeFromNib];
+    }
+    return self;
+}
+
+
+- (instancetype)initWithCoder:(NSCoder *)coder {
+    self = [super initWithCoder:coder];
+    if (self) {
+        
+    }
+    return self;
+}
+
+- (void)awakeFromNib {
+    _selectedControllerIndex = -1;
+    _tabBar = [[CKTabBar alloc] init];
+    _tabBar.delegate = self;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
+    // 设置默认的tabBar frame
+    CGSize screenSize = [UIScreen mainScreen].bounds.size;
+    CGFloat navigationAndStatusBarHeight = 0;
+    if (self.navigationController) {
+        navigationAndStatusBarHeight = self.navigationController.navigationBar.frame.size.height + 20;
+    }
+    self.tabBar.frame = CGRectMake(0,
+                                   screenSize.height - TAB_BAR_HEIGHT - navigationAndStatusBarHeight,
+                                   screenSize.width,
+                                   TAB_BAR_HEIGHT);
+    [self.view addSubview:self.tabBar];
+    
+    // 设置默认的contentViewFrame
+    self.contentViewFrame = CGRectMake(0,
+                                       0,
+                                       screenSize.width,
+                                       screenSize.height - TAB_BAR_HEIGHT - navigationAndStatusBarHeight);
+    self.view.clipsToBounds = YES;
+    self.view.backgroundColor = [UIColor whiteColor];
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    if (!_didViewAppeared) {
+        self.tabBar.selectedItemIndex = 0;
+        _didViewAppeared = YES;
+    }
+}
+
+- (void)setViewControllers:(NSArray *)viewControllers {
+    for (UIViewController *controller in self.viewControllers) {
+        [controller removeFromParentViewController];
+        [controller.view removeFromSuperview];
+    }
+    _viewControllers = [viewControllers copy];
+    [_viewControllers enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
+        [self addChildViewController:obj];
+    }];
+    
+    NSMutableArray *items = [NSMutableArray array];
+    for (UIViewController *controller in _viewControllers) {
+        CKTabItem *item = [[CKTabItem alloc] init];
+        item.image = controller.CK_tabItemImage;
+        item.selectedImage = controller.CK_tabItemSelectedImage;
+        item.title = controller.CK_tabItemTitle;
+        [items addObject:item];
+    }
+    self.tabBar.items = items;
+    if (_didViewAppeared) {
+        NSLog(@"asdfasdf");
+        _selectedControllerIndex = -1;
+        self.tabBar.selectedItemIndex = 0;
+    }
+    
+    // 更新scrollView的content size
+    if (self.scrollView) {
+        self.scrollView.contentSize = CGSizeMake(self.contentViewFrame.size.width * _viewControllers.count,
+                                                 self.contentViewFrame.size.height);
+    }
+}
+
+- (void)setContentViewFrame:(CGRect)contentViewFrame {
+    _contentViewFrame = contentViewFrame;
+    [self updateContentViewsFrame];
+}
+
+- (void)setContentScrollEnabledAndTapSwitchAnimated:(BOOL)switchAnimated {
+    if (!self.scrollView) {
+        self.scrollView = [[UIScrollView alloc] initWithFrame:self.contentViewFrame];
+        self.scrollView.pagingEnabled = YES;
+        self.scrollView.showsHorizontalScrollIndicator = NO;
+        self.scrollView.showsVerticalScrollIndicator = NO;
+        self.scrollView.scrollsToTop = NO;
+        self.scrollView.delegate = self.tabBar;
+        [self.view insertSubview:self.scrollView belowSubview:self.tabBar];
+        self.scrollView.contentSize = CGSizeMake(self.contentViewFrame.size.width * _viewControllers.count,
+                                                 self.contentViewFrame.size.height);
+    }
+    [self updateContentViewsFrame];
+    self.contentSwitchAnimated = switchAnimated;
+}
+
+- (void)updateContentViewsFrame {
+    if (self.scrollView) {
+        self.scrollView.frame = self.contentViewFrame;
+        self.scrollView.contentSize = CGSizeMake(self.contentViewFrame.size.width * _viewControllers.count,
+                                                 self.contentViewFrame.size.height);
+        [self.viewControllers enumerateObjectsUsingBlock:^(UIViewController * _Nonnull controller,
+                                                           NSUInteger idx, BOOL * _Nonnull stop) {
+            if (controller.isViewLoaded) {
+                controller.view.frame = CGRectMake(idx * self.contentViewFrame.size.width,
+                                                   0,
+                                                   self.contentViewFrame.size.width,
+                                                   self.contentViewFrame.size.height);
+            }
+        }];
+        [self.scrollView scrollRectToVisible:self.selectedController.view.frame animated:NO];
+    } else {
+        self.selectedController.view.frame = self.contentViewFrame;
+    }
+}
+
+- (void)setSelectedControllerIndex:(NSInteger)selectedControllerIndex {
+    UIViewController *oldController = nil;
+    if (_selectedControllerIndex >= 0) {
+        oldController = self.viewControllers[_selectedControllerIndex];
+    }
+    UIViewController *curController = self.viewControllers[selectedControllerIndex];
+    BOOL isAppearFirstTime = YES;
+    if (self.scrollView) {
+        // contentView支持滚动
+        // 调用oldController的viewWillDisappear方法
+        [oldController viewWillDisappear:NO];
+        if (!curController.view.superview) {
+            // superview为空，表示为第一次加载，设置frame，并添加到scrollView
+            curController.view.frame = CGRectMake(selectedControllerIndex * self.scrollView.frame.size.width,
+                                                  0,
+                                                  self.scrollView.frame.size.width,
+                                                  self.scrollView.frame.size.height);
+            [self.scrollView addSubview:curController.view];
+        } else {
+            // superview不为空，表示为已经加载过了，调用viewWillAppear方法
+            isAppearFirstTime = NO;
+            [curController viewWillAppear:NO];
+        }
+        // 切换到curController
+        [self.scrollView scrollRectToVisible:curController.view.frame animated:self.contentSwitchAnimated];
+    } else {
+        // contentView不支持滚动
+        // 将oldController的view移除
+        if (oldController) {
+            [oldController.view removeFromSuperview];
+        }
+        [self.view insertSubview:curController.view belowSubview:self.tabBar];
+        // 设置curController.view的frame
+        if (!CGRectEqualToRect(curController.view.frame, self.contentViewFrame)) {
+            curController.view.frame = self.contentViewFrame;
+        }
+    }
+    
+    // 当contentView为scrollView及其子类时，设置它支持点击状态栏回到顶部
+    if (oldController && [oldController.view isKindOfClass:[UIScrollView class]]) {
+        [(UIScrollView *)oldController.view setScrollsToTop:NO];
+    }
+    if ([curController.view isKindOfClass:[UIScrollView class]]) {
+        [(UIScrollView *)curController.view setScrollsToTop:YES];
+    }
+    
+    _selectedControllerIndex = selectedControllerIndex;
+    
+    // 调用状态切换的回调方法
+    [oldController tabItemDidDeselected];
+    [curController tabItemDidSelected];
+    if (self.scrollView) {
+        [oldController viewDidDisappear:NO];
+        if (!isAppearFirstTime) {
+            [curController viewDidAppear:NO];
+        }
+    }
+}
+
+- (UIViewController *)selectedController {
+    if (self.selectedControllerIndex >= 0) {
+        return self.viewControllers[self.selectedControllerIndex];
+    }
+    return nil;
+}
+
+#pragma mark - CKTabBarDelegate
+- (void)CK_tabBar:(CKTabBar *)tabBar didSelectedItemAtIndex:(NSInteger)index {
+    if (index == self.selectedControllerIndex) {
+        return;
+    }
+    self.selectedControllerIndex = index;
+}
+
+
+@end
+
+@implementation UIViewController (CKTabBarController)
+
+- (NSString *)CK_tabItemTitle {
+    return objc_getAssociatedObject(self, _cmd);
+}
+
+- (void)setCK_tabItemTitle:(NSString *)CK_tabItemTitle {
+    objc_setAssociatedObject(self, @selector(CK_tabItemTitle), CK_tabItemTitle, OBJC_ASSOCIATION_COPY_NONATOMIC);
+}
+
+- (UIImage *)CK_tabItemImage {
+    return objc_getAssociatedObject(self, _cmd);
+}
+
+- (void)setCK_tabItemImage:(UIImage *)CK_tabItemImage {
+    objc_setAssociatedObject(self, @selector(CK_tabItemImage), CK_tabItemImage, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+- (UIImage *)CK_tabItemSelectedImage {
+    return objc_getAssociatedObject(self, _cmd);
+}
+
+- (void)setCK_tabItemSelectedImage:(UIImage *)CK_tabItemSelectedImage {
+    objc_setAssociatedObject(self, @selector(CK_tabItemSelectedImage), CK_tabItemSelectedImage, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+- (CKTabItem *)CK_tabItem {
+    CKTabBar *tabBar = self.CK_tabBarController.tabBar;
+    NSInteger index = [self.CK_tabBarController.viewControllers indexOfObject:self];
+    return tabBar.items[index];
+}
+
+- (CKTabBarController *)CK_tabBarController {
+    return (CKTabBarController *)self.parentViewController;
+}
+
+- (void)tabItemDidSelected {
+    
+}
+
+- (void)tabItemDidDeselected {
+    
+}
+@end
